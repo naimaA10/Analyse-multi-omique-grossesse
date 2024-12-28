@@ -1,0 +1,1525 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(dplyr)
+library(tidyr)
+```
+
+
+# Lecture des données
+```{r}
+data_pregnancy <- readRDS("data_pregnancy.Rds")
+sample_info <- data.frame(data_pregnancy$sample_info)
+protein <- data.frame(data_pregnancy$protein)
+cyto <- data.frame(data_pregnancy$cyto)
+rna <- data.frame(data_pregnancy$RNA)
+```
+
+
+
+```{r}
+concatenated_data1 <- rna %>%
+  unite("rna", everything(), sep = "")
+
+concatenated_data2 <- protein %>%
+  unite("rna", everything(), sep = "")
+concatenated_data3 <- cyto %>%
+  unite("rna", everything(), sep = "")
+
+# Create a histogram for the first distribution
+hist(protein, col = "skyblue", xlab = "Valeurs", ylab = "Effectifs", xlim = c(min(c(protein, cyto, rna)), max(c(protein, cyto, rna))), ylim = c(0, 30), breaks = 15)
+
+# Overlay histograms for the other two distributions
+hist(cyto, col = rgb(1, 0, 0, 0.5), add = TRUE, breaks = 15)
+hist(rna, col = rgb(0, 1, 0, 0.5), add = TRUE, breaks = 15)
+
+# Add a legend
+legend("topright", legend = c("Normal", "Exponential", "Poisson"), fill = c("skyblue", rgb(1, 0, 0, 0.5), rgb(0, 1, 0, 0.5)))
+```
+
+
+# Selection : variance
+
+## Calcul de la variance pour RNA
+
+### Histogramme de la variance
+```{r}
+rna <- rna[,colSums(rna) > 10]
+
+var_rna <- lapply(rna, var)
+var_rna <- as.numeric(var_rna)
+length(var_rna) # Au total 19 884 gènes
+
+hist(var_rna)
+```
+
+### Classement des gènes les plus variants 
+
+```{r}
+sorted_genes <- order(var_rna, decreasing = TRUE)
+#var_rna[sorted_genes]
+```
+
+### Garde 1985 gènes les plus variants 
+
+```{r}
+num_genes_to_keep <- 1985
+selected_genes <- sorted_genes[1:num_genes_to_keep]
+```
+
+### Nouveau dataset avec les 500 gènes les plus variants
+
+```{r}
+rna_processed <- rna[, selected_genes]
+```
+
+
+## Calcul de la variance pour protéines
+
+### Histogramme de la variance
+
+```{r}
+var_protein <- lapply(protein, var)
+var_protein <- as.numeric(var_protein)
+length(var_protein) # 2339 protéines
+hist(var_protein)
+```
+
+### Classement des protéines les plus variantes 
+
+```{r}
+sorted_proteins <- order(var_protein, decreasing = TRUE)
+```
+
+
+### Garde 1000 protéines les plus variants 
+
+```{r}
+num_proteins_to_keep <- 1000
+selected_proteins <- sorted_proteins[1:num_proteins_to_keep]
+```
+
+### Nouveau dataset avec les 500 gènes les plus variants
+
+```{r}
+protein_processed <- protein[, selected_proteins]
+```
+
+
+## Calcul de la variance pour Cyto
+
+```{r}
+var_cyto <- lapply(cyto, var)
+var_cyto <- as.numeric(var_cyto)
+length(var_cyto)
+hist(var_cyto, breaks = 30)
+
+```
+
+
+```{r}
+keep_cyto <- which(var_cyto > 0.1)
+cyto_processed <- cyto[, keep_cyto]
+dim(cyto_processed)
+```
+
+
+## Scale les data 
+
+Etant donné que les données de RNA seq ont déjà été scale et que l'on a des 
+valeurs négatives, alors on a centré réduit (0, 1)
+```{r}
+scale_protein <- scale(protein_processed)
+dim(scale_protein)
+
+scale_rna <- scale(rna_processed)
+dim(scale_rna)
+
+scale_cyto <- scale(cyto_processed)
+dim(scale_cyto)
+```
+
+
+# PCA
+
+## Ajout de la colonne Y
+```{r}
+label_sample <- paste(sample_info$sample, sample_info$Y, sep = "_")
+rownames(sample_info) <- label_sample
+sample_info <- sample_info[-1]
+
+# Pour les protéines
+scale_protein <- as.data.frame(scale_protein)
+scale_protein <- merge(scale_protein, sample_info, by="row.names")
+dim(scale_protein)
+rownames(scale_protein) <- scale_protein$Row.names
+scale_protein <- scale_protein[,-1]
+
+# Pour les ARN
+scale_rna <- as.data.frame(scale_rna)
+scale_rna <- merge(scale_rna, sample_info, by="row.names")
+dim(scale_rna)
+rownames(scale_rna) <- scale_rna$Row.names
+scale_rna <- scale_rna[,-1]
+scale_rna$Y
+
+# Pour cyto
+scale_cyto <- as.data.frame(scale_cyto)
+scale_cyto <- merge(scale_cyto, sample_info, by="row.names")
+dim(scale_cyto)
+rownames(scale_cyto) <- scale_cyto$Row.names
+scale_cyto <- scale_cyto[,-1]
+scale_cyto$Y
+```
+
+# PCA des protéines
+
+## Dataset X 
+
+```{r}
+taille_protein <- dim(scale_protein)[2]
+X_protein <- scale_protein[,-taille_protein]
+```
+
+## Plot coude pour nombre de composantes
+
+```{r}
+library(mixOmics)
+protein.pca.multi <- tune.pca(X_protein, ncomp = 33)
+plot(protein.pca.multi)
+```
+## Variance cumulée
+
+```{r}
+protein.pca.multi$cum.var
+```
+
+## Variables qui contribuent le plus à la première composante
+```{r}
+head(selectVar(protein.pca.multi, comp = 1)$value, 10)
+```
+## Variables qui contribuent le plus à la seconde composante
+
+```{r}
+head(selectVar(protein.pca.multi, comp = 2)$value, 5)
+```
+
+
+## PCA : inidvidus
+```{r}
+plotIndiv(protein.pca.multi,
+          comp = c(1, 2),   # Specify components to plot
+          ind.names = TRUE, # Show row names of samples
+          group = scale_protein$Y,
+          title = 'PCA comp 1 - 2',
+          legend = TRUE, legend.title = 'Stage of pregnancy : protein data')
+```
+
+## PCA : variables
+```{r}
+plotVar(protein.pca.multi, comp = c(1, 2),
+        var.names = TRUE,
+        cex = 3,         # To change the font size
+        # cutoff = 0.5,  # For further cutoff
+        title = 'PCA comp 1 - 2')
+```
+
+## Biplot
+```{r}
+biplot(protein.pca.multi, group = scale_protein$Y, 
+       legend.title = 'Bi plot PCA')
+```
+# PCA des gènes
+
+## Dataset X 
+
+```{r}
+taille_rna <- dim(scale_rna)[2]
+X_rna <- scale_rna[,-taille_rna]
+```
+
+## Plot coude pour nombre de composantes
+
+```{r}
+rna.pca.multi <- tune.pca(X_rna, ncomp = 33)
+plot(rna.pca.multi)
+```
+## Variance cumulée
+
+```{r}
+rna.pca.multi$cum.var
+```
+
+## Variables qui contribuent le plus à la première composante
+```{r}
+head(selectVar(rna.pca.multi, comp = 1)$value, 10)
+```
+## Variables qui contribuent le plus à la seconde composante
+```{r}
+head(selectVar(rna.pca.multi, comp = 2)$value, 5)
+```
+
+## PCA : inidvidus
+
+```{r}
+plotIndiv(rna.pca.multi,
+          comp = c(1, 2),   # Specify components to plot
+          ind.names = TRUE, # Show row names of samples
+          group = scale_rna$Y,
+          title = 'PCA comp 1 - 2',
+          legend = TRUE, legend.title = 'Stage of pregnancy : rna data')
+```
+
+
+## PCA : individus sans outlier
+
+```{r}
+plotIndiv(rna.pca.multi,
+          comp = c(1, 2),   # Specify components to plot
+          ind.names = TRUE, # Show row names of samples
+          group = scale_rna$Y,
+          title = 'PCA comp 1 - 2',
+          xlim = c(-3,3),
+          ylim = c(-5, 5),
+          legend = TRUE, legend.title = 'Stage of pregnancy : rna data')
+```
+
+
+## PCA : variables
+```{r}
+plotVar(rna.pca.multi, comp = c(1, 2),
+        var.names = TRUE,
+        cex = 3,         # To change the font size
+        # cutoff = 0.5,  # For further cutoff
+        title = 'PCA comp 1 - 2')
+```
+
+## Biplot
+```{r}
+biplot(rna.pca.multi, group = scale_rna$Y, 
+       legend.title = 'Bi plot PCA')
+```
+
+## Biplot
+```{r}
+biplot(rna.pca.multi, group = scale_rna$Y, 
+       legend.title = 'Bi plot PCA')
+```
+
+
+# PCA : données cyto
+
+## Dataset X 
+
+```{r}
+taille_cyto <- dim(scale_cyto)[2]
+X_cyto <- scale_cyto[,-taille_cyto]
+```
+
+## Plot coude pour nombre de composantes
+
+```{r}
+cyto.pca.multi <- tune.pca(X_cyto, ncomp = 33)
+plot(cyto.pca.multi)
+```
+
+## Variance cumulée
+
+```{r}
+cyto.pca.multi$cum.var
+```
+
+## Variables qui contribuent le plus à la première composante
+```{r}
+head(selectVar(cyto.pca.multi, comp = 1)$value, 10)
+```
+
+## Variables qui contribuent le plus à la seconde composante
+```{r}
+head(selectVar(cyto.pca.multi, comp = 2)$value, 5)
+```
+
+## PCA : inidvidus
+
+```{r}
+plotIndiv(cyto.pca.multi,
+          comp = c(1, 2),   # Specify components to plot
+          ind.names = TRUE, # Show row names of samples
+          group = scale_cyto$Y,
+          title = 'PCA comp 1 - 2',
+          legend = TRUE, legend.title = 'Stage of pregnancy : cyto data')
+```
+
+## PCA : variables
+
+```{r}
+plotVar(cyto.pca.multi, comp = c(1, 2),
+        var.names = TRUE,
+        cex = 3,         # To change the font size
+        # cutoff = 0.5,  # For further cutoff
+        title = 'PCA comp 1 - 2')
+```
+
+## Biplot
+
+```{r}
+biplot(cyto.pca.multi, group = scale_cyto$Y, 
+       legend.title = 'Bi plot PCA')
+```
+
+
+# sPCA protéine
+
+## Nombre de features optimals
+```{r}
+grid.keepX <- c(seq(5, 30, 5))
+
+set.seed(30) # For reproducibility with this handbook, remove otherwise
+tune.spca.result <- tune.spca(X_protein, ncomp = 2, 
+                              folds = 5, 
+                              test.keepX = grid.keepX, nrepeat = 10) 
+
+plot(tune.spca.result)
+```
+
+## Nombre de features optimals
+
+```{r}
+keepX.select <- tune.spca.result$choice.keepX
+
+protein.spca.multi <- spca(X_protein, ncomp = 2, keepX = keepX.select)
+
+# Proportion of explained variance:
+protein.spca.multi$prop_expl_var$X
+```
+
+## Plot individus
+```{r}
+plotIndiv(protein.spca.multi,
+          comp = c(1, 2),   # Specify components to plot
+          ind.names = TRUE, # Show row names of samples
+          group = scale_protein$Y,
+          title = 'Protein data, sPCA comp 1 - 2',
+          legend = TRUE, legend.title = 'Pregnancy stage')
+```
+
+## Bi plot
+
+```{r}
+biplot(protein.spca.multi, group = scale_protein$Y)
+```
+
+```{r}
+plotVar(protein.spca.multi, comp = c(1, 2), var.names = TRUE, 
+        cex = 3, # To change the font size 
+        title = 'sPCA comp 1 - 2')
+```
+
+```{r}
+plotLoadings(protein.spca.multi, comp = 1)
+```
+```{r}
+plotLoadings(protein.spca.multi, comp = 2)
+```
+
+
+# sPCA rna
+
+## Nombre de features optimals
+```{r}
+grid.keepX <- c(seq(5, 30, 5))
+
+set.seed(30) # For reproducibility with this handbook, remove otherwise
+tune.spca.result <- tune.spca(X_rna, ncomp = 2, 
+                              folds = 5, 
+                              test.keepX = grid.keepX, nrepeat = 10) 
+
+plot(tune.spca.result)
+```
+
+## Nombre de features optimals
+
+```{r}
+keepX.select <- tune.spca.result$choice.keepX
+
+rna.spca.multi <- spca(X_rna, ncomp = 2, keepX = keepX.select)
+
+# Proportion of explained variance:
+rna.spca.multi$prop_expl_var$X
+```
+
+
+
+## Plot individus
+```{r}
+plotIndiv(rna.spca.multi,
+          comp = c(1, 2),   # Specify components to plot
+          ind.names = TRUE, # Show row names of samples
+          group = scale_rna$Y,
+          #xlim = c(-2, 0.5),
+          #ylim = c(-1, 1),
+          title = 'RNA data, sPCA comp 1 - 2',
+          legend = TRUE, legend.title = 'Pregnancy stage')
+```
+
+## Bi plot
+
+```{r}
+biplot(rna.spca.multi, group = scale_rna$Y)
+```
+
+```{r}
+plotVar(rna.spca.multi, comp = c(1, 2), var.names = TRUE, 
+        cex = 3, # To change the font size 
+        title = 'sPCA comp 1 - 2')
+```
+
+
+```{r}
+plotLoadings(rna.spca.multi, comp = 1)
+```
+
+```{r}
+plotLoadings(rna.spca.multi, comp = 2)
+```
+
+
+# sPCA cyto
+
+## Nombre de features optimals
+```{r}
+grid.keepX <- c(seq(5, 30, 5))
+
+set.seed(30) # For reproducibility with this handbook, remove otherwise
+tune.spca.result <- tune.spca(X_cyto, ncomp = 2, 
+                              folds = 5, 
+                              test.keepX = grid.keepX, nrepeat = 10) 
+
+plot(tune.spca.result)
+```
+
+## Nombre de features optimals
+
+```{r}
+keepX.select <- tune.spca.result$choice.keepX
+
+cyto.spca.multi <- spca(X_cyto, ncomp = 2, keepX = keepX.select)
+
+# Proportion of explained variance:
+cyto.spca.multi$prop_expl_var$X
+```
+
+
+## Plot individus
+```{r}
+plotIndiv(cyto.spca.multi,
+          comp = c(1, 2),   # Specify components to plot
+          ind.names = TRUE, # Show row names of samples
+          group = scale_cyto$Y,
+          title = 'Cyto data, sPCA comp 1 - 2',
+          legend = TRUE, legend.title = 'Pregnancy stage')
+```
+
+## Bi plot
+
+```{r}
+biplot(cyto.spca.multi, group = scale_cyto$Y)
+```
+
+```{r}
+plotVar(cyto.spca.multi, comp = c(1, 2), var.names = TRUE, 
+        cex = 3, # To change the font size 
+        title = 'sPCA comp 1 - 2')
+```
+
+```{r}
+plotLoadings(cyto.spca.multi, comp = 1)
+```
+
+```{r}
+plotLoadings(cyto.spca.multi, comp = 2)
+```
+
+
+
+# PLSDA
+## Protein
+
+```{r}
+plsda.srbct <- plsda(protein_processed,scale_protein$Y, ncomp = 10) # Premier modèle plsda
+
+perf.plsda.srbct <- perf(plsda.srbct, validation = 'Mfold', folds = 3, 
+                         progressBar = FALSE,  # Set to TRUE to track progress
+                         nrepeat = 10)         # We suggest nrepeat = 50
+
+plot(perf.plsda.srbct, sd = TRUE, legend.position = 'horizontal')
+```
+
+```{r}
+final.plsda.srbct <- plsda(protein_processed,scale_protein$Y, ncomp = 2 )
+
+plotIndiv(final.plsda.srbct, ind.names = FALSE, legend=TRUE,
+          comp=c(1,2), ellipse = TRUE, 
+          title = 'PLS-DA comp 1-2',
+          X.label = 'PLS-DA comp 1', Y.label = 'PLS-DA comp 2')
+```
+
+```{r}
+final.plsda.srbct <- plsda(protein_processed,scale_protein$Y, ncomp = 2 )
+
+plotIndiv(final.plsda.srbct, ind.names = FALSE, legend=TRUE,
+          comp=c(1,2), ellipse = TRUE, 
+          title = 'PLS-DA comp 1-2',
+          X.label = 'PLS-DA comp 1', Y.label = 'PLS-DA comp 2')
+```
+
+Pour afficher le plot du background
+
+```{r}
+perf.final.plsda.srbct <- perf(final.plsda.srbct, validation = 'Mfold', 
+                               folds = 3, 
+                               progressBar = FALSE, # TRUE to track progress
+                               nrepeat = 50) # we recommend 50 
+perf.final.plsda.srbct$error.rate$BER[, 'max.dist']
+
+
+perf.final.plsda.srbct$error.rate.class$max.dist
+
+
+background.max <- background.predict(final.plsda.srbct, 
+                                     comp.predicted = 2,
+                                     dist = 'max.dist') 
+
+plotIndiv(final.plsda.srbct, comp = 1:2, group = scale_protein$Y,
+          ind.names = FALSE, title = 'PLSDA Comp 1-2 Protein',
+          legend = TRUE,  background = background.max)
+```
+
+## Cytokine
+
+Premier modèle
+```{r}
+plsda.srbct <- plsda(cyto_processed,scale_cyto$Y, ncomp = 10)
+
+perf.plsda.srbct <- perf(plsda.srbct, validation = 'Mfold', folds = 3, 
+                         progressBar = FALSE,  # Set to TRUE to track progress
+                         nrepeat = 10)         # We suggest nrepeat = 50
+
+plot(perf.plsda.srbct, sd = TRUE, legend.position = 'horizontal')
+```
+
+```{r}
+final.plsda.srbct <- plsda(cyto_processed,scale_cyto$Y, ncomp = 4 )
+
+plotIndiv(final.plsda.srbct, ind.names = FALSE, legend=TRUE,
+          comp=c(1,2), ellipse = TRUE, 
+          title = 'PLS-DA on SRBCT comp 1-2',
+          X.label = 'PLS-DA comp 1', Y.label = 'PLS-DA comp 2')
+
+perf.final.plsda.srbct <- perf(final.plsda.srbct, validation = 'Mfold', 
+                               folds = 3, 
+                               progressBar = FALSE, # TRUE to track progress
+                               nrepeat = 50) # we recommend 50 
+perf.final.plsda.srbct$error.rate$BER[, 'max.dist']
+
+
+perf.final.plsda.srbct$error.rate.class$max.dist
+
+
+background.max <- background.predict(final.plsda.srbct, 
+                                     comp.predicted = 2,
+                                     dist = 'max.dist') 
+
+plotIndiv(final.plsda.srbct, comp = 1:2, group = scale_protein$Y,
+          ind.names = FALSE, title = 'PLSDA comp 1-2 Cyto',
+          legend = TRUE,  background = background.max)
+
+```
+
+## RNA
+
+```{r}
+plsda.srbct <- plsda(rna_processed,scale_rna$Y, ncomp = 10)
+
+perf.plsda.srbct <- perf(plsda.srbct, validation = 'Mfold', folds = 3, 
+                         progressBar = FALSE,  # Set to TRUE to track progress
+                         nrepeat = 10)         # We suggest nrepeat = 50
+
+plot(perf.plsda.srbct, sd = TRUE, legend.position = 'horizontal')
+```
+
+```{r}
+final.plsda.srbct <- plsda(rna_processed,scale_rna$Y, ncomp = 3 )
+
+plotIndiv(final.plsda.srbct, ind.names = FALSE, legend=TRUE,
+          comp=c(1,2), ellipse = TRUE, 
+          title = 'PLS-DA on SRBCT comp 1-2',
+          X.label = 'PLS-DA comp 1', Y.label = 'PLS-DA comp 2')
+
+perf.final.plsda.srbct <- perf(final.plsda.srbct, validation = 'Mfold', 
+                               folds = 3, 
+                               progressBar = FALSE, # TRUE to track progress
+                               nrepeat = 50) # we recommend 50 
+perf.final.plsda.srbct$error.rate$BER[, 'max.dist']
+
+
+perf.final.plsda.srbct$error.rate.class$max.dist
+
+
+background.max <- background.predict(final.plsda.srbct, 
+                                     comp.predicted = 2,
+                                     dist = 'max.dist') 
+
+plotIndiv(final.plsda.srbct, comp = 1:2, group = scale_protein$Y,
+          ind.names = FALSE, title = 'PLSDA comp 1-2 RNA',
+          legend = TRUE,  background = background.max)
+
+
+```
+
+
+# PLS
+
+## RNA data
+```{r}
+rna.pls.result <- pls(X_rna, scale_rna$Y, ncomp = 2) # run the method
+Q2.pls1.liver <- perf(rna.pls.result, validation = 'Mfold', 
+                      folds = 10, nrepeat = 50)
+plot(Q2.pls1.liver, criterion = 'Q2')
+# Set up a grid of values: 
+list.keepX <- c(5:10, seq(15, 50, 5))     
+
+# list.keepX  # Inspect the keepX grid
+set.seed(33)  # For reproducibility with this handbook, remove otherwise
+tune.spls1.MAE <- tune.spls(X_rna,scale_rna$Y, ncomp= 2, 
+                            test.keepX = list.keepX, 
+                            validation = 'Mfold', 
+                            folds = 10,
+                            nrepeat = 50, 
+                            progressBar = FALSE, 
+                            measure = 'MAE')
+plot(tune.spls1.MAE)
+```
+
+
+
+```{r}
+choice.ncomp <- tune.spls1.MAE$choice.ncomp$ncomp
+# Optimal number of variables to select in X based on the MAE criterion
+# We stop at choice.ncomp
+choice.keepX <- tune.spls1.MAE$choice.keepX[1:choice.ncomp]  
+
+choice.ncomp
+```
+```{r}
+spls1.liver <- spls(rna_processed, scale_rna$Y, ncomp = 2, keepX = choice.keepX, 
+                    mode = "regression")
+```
+
+```{r}
+selectVar(spls1.liver, comp = 1)$X$name
+
+```
+
+
+## Plot individus
+
+```{r}
+plotIndiv(rna.pls.result, col = scale_rna$Y)
+```
+
+```{r}
+plotVar(rna.pls.result, col = scale_rna$Y)
+```
+
+
+## Protein data
+
+```{r}
+protein.pls.result <- pls(X_protein, scale_protein$Y, ncomp = 2) # run the method
+```
+
+### Plot individus
+
+```{r}
+plotIndiv(protein.pls.result, col = scale_protein$Y)
+```
+
+## Cyto data
+
+```{r}
+cyto.pls.result <- pls(X_cyto, scale_cyto$Y, ncomp = 2) # run the method
+```
+
+
+### Plot individus
+
+```{r}
+plotIndiv(cyto.pls.result, col = scale_cyto$Y)
+```
+
+```{r}
+plotVar(cyto.pls.result)
+```
+
+# PLS
+The horizontal line of 0.0975 indicates the threshold below which adding a dimension may not be beneficial to improve accuracy in PLS.
+
+## PLS RNA
+
+1 composante
+
+```{r}
+tune.pls1.rna <- pls(X = X_rna, Y = scale_rna$Y, ncomp = 4, mode = 'regression')
+set.seed(33)  # For reproducibility with this handbook, remove otherwise
+Q2.pls1.rna <- perf(tune.pls1.rna, validation = 'Mfold', 
+                      folds = 10, nrepeat = 5)
+
+choice.ncomp_rna_pls <- tune.pls1.rna$choice.ncomp$ncomp
+# Optimal number of variables to select in X based on the MAE criterion
+# We stop at choice.ncomp
+choice.keepX <- tune.spls1.MAE$choice.keepX[1:choice.ncomp] 
+
+plot(Q2.pls1.rna, criterion = 'Q2')
+
+tune.pls1.rna <- pls(X = X_rna, Y = scale_rna$Y, ncomp = 2, mode = 'regression')
+
+
+plotVar(tune.pls1.rna)
+
+```
+
+
+## PLS Prot
+
+1 composante
+
+```{r}
+tune.pls1.prot <- pls(X = X_protein, Y = scale_protein$Y, ncomp = 4, mode = 'regression')
+set.seed(33)  # For reproducibility with this handbook, remove otherwise
+Q2.pls1.prot <- perf(tune.pls1.prot, validation = 'Mfold', 
+                      folds = 10, nrepeat = 5)
+plot(Q2.pls1.prot, criterion = 'Q2')
+```
+
+## PLS Cyto
+
+1 composante
+
+```{r}
+tune.pls1.cyto <- pls(X = X_cyto, Y = scale_cyto$Y, ncomp = 4, mode = 'regression')
+set.seed(33)  # For reproducibility with this handbook, remove otherwise
+Q2.pls1.cyto <- perf(tune.pls1.cyto, validation = 'Mfold', 
+                      folds = 10, nrepeat = 5)
+plot(Q2.pls1.cyto, criterion = 'Q2')
+```
+
+
+# sPLS
+
+
+```{r}
+X1 <- X_protein # select three of the five dataframes to explore
+X2 <- X_rna
+X3 <- X_cyto
+
+# compile these into a single X object
+X <- list(Protein = X1, RNA = X2, Cyto = X3) 
+
+lapply(X, dim) # check dimensions
+```
+
+
+## Tune sPLS : Protein 
+```{r}
+list.keepX <- seq(5, 30, 5)     
+
+# list.keepX  # Inspect the keepX grid
+set.seed(33)  # For reproducibility with this handbook, remove otherwise
+tune.spls1 <- tune.spls(X_protein, scale_protein$Y, ncomp= 4, 
+                            test.keepX = list.keepX, 
+                            validation = 'Mfold', 
+                            folds = 10,
+                            nrepeat = 5, 
+                            progressBar = TRUE, 
+                            measure = 'MSE')
+plot(tune.spls1)
+
+choice.ncomp_1 <- tune.spls1$choice.ncomp$ncomp
+choice.keepX_1 <- tune.spls1$choice.keepX[1:choice.ncomp_1]
+```
+
+
+## Tune sPLS : Cyto
+
+```{r}
+list.keepX <- seq(5, 30, 5)     
+
+# list.keepX  # Inspect the keepX grid
+set.seed(33)  # For reproducibility with this handbook, remove otherwise
+tune.spls1_2 <- tune.spls(X_cyto, scale_cyto$Y, ncomp= 4, 
+                            test.keepX = list.keepX, 
+                            validation = 'Mfold', 
+                            folds = 10,
+                            nrepeat = 5, 
+                            progressBar = TRUE, 
+                            measure = 'MSE')
+plot(tune.spls1_2)
+
+choice.ncomp_2 <- tune.spls1_2$choice.ncomp$ncomp
+choice.keepX_2 <- tune.spls1_2$choice.keepX[1:choice.ncomp_2]
+```
+
+
+## Tune sPLS : RNA
+```{r}
+list.keepX <- seq(5, 30, 5)     
+
+# list.keepX  # Inspect the keepX grid
+set.seed(33)  # For reproducibility with this handbook, remove otherwise
+tune.spls1_3 <- tune.spls(X_rna, scale_rna$Y, ncomp= 4, 
+                            test.keepX = list.keepX, 
+                            validation = 'Mfold', 
+                            folds = 10,
+                            nrepeat = 5, 
+                            progressBar = TRUE, 
+                            measure = 'MSE')
+plot(tune.spls1_3)
+
+choice.ncomp_3 <- tune.spls1_3$choice.ncomp$ncomp
+choice.keepX_3 <- tune.spls1_3$choice.keepX[1:choice.ncomp_3]
+
+```
+
+```{r}
+pls.RNA <- spls(X[["RNA"]], Y = sample_info$Y,
+             keepX = choice.ncomp_3, keepY = choice.keepX_3)
+```
+
+
+## Modèle sPLS
+
+```{r}
+# select arbitrary values of features to keep
+
+# generate three pairwise PLS models
+pls1 <- spls(X[["Protein"]], X[["RNA"]], 
+             keepX = choice.keepX_1, keepY = choice.keepX_3)
+pls2 <- spls(X[["RNA"]], X[["Cyto"]], 
+             keepX = choice.keepX_3, keepY = choice.keepX_2)
+pls3 <- spls(X[["Protein"]], X[["Cyto"]], 
+             keepX = choice.keepX_1, keepY = choice.keepX_2)
+
+
+plotVar(pls1, cutoff = 0.5, title = "(b) RNA vs Cyto",
+        legend = c("RNA", "Cyto"),
+        var.names = FALSE, style = 'graphics',
+        pch = c(16, 17), cex = c(2,2),
+        col = c('darkorchid', 'lightgreen'))
+
+# plot features of second PLS
+plotVar(pls2, cutoff = 0.5, title = "(b) RNA vs Cyto",
+        legend = c("RNA", "Cyto"),
+        var.names = FALSE, style = 'graphics',
+        pch = c(16, 17), cex = c(2,2),
+        col = c('darkorchid', 'lightgreen'))
+
+# plot features of third PLS
+plotVar(pls3, cutoff = 0.5, title = "(c) Protein vs Cyto",
+        legend = c("Protein", "Cyto"),
+        var.names = FALSE, style = 'graphics',
+        pch = c(16, 17), cex = c(2,2),
+        col = c('darkorchid', 'lightgreen'))
+
+```
+
+
+
+```{r}
+# Profils d'expressions pour les sPLS pariwised
+library(timeOmics)
+
+
+# plot features of first PLS :  Protein VS RNA
+plotVar(pls1, cutoff = 0.5, title = "(a) Protein vs RNA",
+        legend = c("Protein", "RNA"),
+        var.names = FALSE, style = 'graphics',
+        pch = c(16, 17), cex = c(2,2),
+        col = c('darkorchid', 'lightgreen'))
+
+
+# X[["Protein"]], X[["RNA"]],X[["Cyto"]]
+
+# vraiment il abuse : 
+
+source("spls.results.R")
+
+# Extraire les variables les plus importantes du composant spécifié
+
+
+
+
+selectVar(pls1)
+
+
+library(reshape2)
+library(ggplot2)
+library(timeOmics)
+
+
+clust.psl1 <- getCluster(pls1)
+clust1 <- which(clust.psl1$cluster==1)
+clust2 <- which(clust.psl1$cluster==2)
+clustm1 <- which(clust.psl1$cluster==-1)
+clustm2 <- which(clust.psl1$cluster==-2)
+
+ggplot(data = X[["RNA"]], aes(x = ))
+
+
+# Plots des profils d'expression :
+# meltm = melt(t(cbind(summary.X1.spls1$spls.means, summary.X2.spls1$spls.means)))
+# meltm$comp = substr(meltm$Var1, 1, 5) 
+# meltm$data = rep(c(rep('Protein', ncol(summary.X1.spls1$spls.means)), rep('RNA', ncol(summary.X2.spls1$spls.means))), 4)
+# print(ggplot(data=meltm, aes(x=Var2, y=value, group = data, color = data)) + geom_line() + facet_wrap( ~ Var1) + ggtitle('sPLS clusters, mean profiles') + xlab('time') +ylab('scaled value'))
+
+
+# getting clusters
+
+
+summary.X1= spls.result(data = scale(X[["Protein"]]), block = 'X', pls1)
+summary.X2 = spls.result(data = scale(X[["RNA"]]), block = 'Y', pls1)
+
+melt.data = melt(t(cbind(scale(protein_processed[, names(summary.X1$var.selected)]), scale(rna_processed[, names(summary.X2$var.selected)]))))
+#melt.data = melt(t(cbind((X1[, names(summary.X1$var.selected)]), (X2[, names(summary.X2$var.selected)]))))
+melt.data$comp= as.factor(rep(c(summary.X1$var.selected, summary.X2$var.selected), 4))  # filling up the melted values by repeating comp and sign
+melt.data$sign= as.factor(rep(c(summary.X1$var.sign, summary.X2$var.sign), 4))
+melt.data$data = rep(c(rep('Protein', length(summary.X1$var.selected)), rep('RNA', length(summary.X2$var.selected))), 4)
+melt.data$Y = substr(melt.data$Var2,9,9)
+
+
+# test <- melt.data %>%
+#   group_by(Var1,comp,sign,Y) %>%
+#   summarise(avg = mean(value))
+
+
+color=c("tomato","slateblue")
+names(color)=c("Protein","RNA")
+
+#png("spls_bioreactor.png", width = 3000, height = 1800, res = 400,pointsize=12)
+
+print(ggplot(melt.data, aes(x=Y, y=value, group = interaction(Var1,data), color = data)) +scale_color_manual(values=color)+ geom_line(lwd=0.2) +   facet_grid(sign~comp, labeller=labeller(sign = c(pos="Positive",neg="Negative"), comp=c('1'="Component 1", '2'="Component 2", '3'='Component 3')))+ ggtitle('                       sPLS, correlated data across time') + xlab('Number of days')+ scale_y_continuous(limits = c(-2, 2)) +ylab('Scaled value'))
+
+#dev.off()
+
+```
+
+
+```{r}
+summary.X1= spls.result(data = scale(X[["RNA"]]), block = 'X', pls2)
+summary.X2 = spls.result(data = scale(X[["Cyto"]]), block = 'Y', pls2)
+
+melt.data = melt(t(cbind(scale(rna_processed[, names(summary.X1$var.selected)]), scale(cyto_processed[, names(summary.X2$var.selected)]))))
+#melt.data = melt(t(cbind((X1[, names(summary.X1$var.selected)]), (X2[, names(summary.X2$var.selected)]))))
+melt.data$comp= as.factor(rep(c(summary.X1$var.selected, summary.X2$var.selected), 4))  # filling up the melted values by repeating comp and sign
+melt.data$sign= as.factor(rep(c(summary.X1$var.sign, summary.X2$var.sign), 4))
+melt.data$data = rep(c(rep('RNA', length(summary.X1$var.selected)), rep('Cyto', length(summary.X2$var.selected))), 4)
+melt.data$Y = substr(melt.data$Var2,9,9)
+
+
+# test <- melt.data %>%
+#   group_by(Var1,comp,sign,Y) %>%
+#   summarise(avg = mean(value))
+
+
+color=c("tomato","slateblue")
+names(color)=c("Protein","RNA")
+
+#png("spls_bioreactor.png", width = 3000, height = 1800, res = 400,pointsize=12)
+
+print(ggplot(melt.data, aes(x=Y, y=value, group = interaction(Var1,data), color = data)) +scale_color_manual(values=color)+ geom_line(lwd=0.2) +   facet_grid(sign~comp, labeller=labeller(sign = c(pos="Positive",neg="Negative"), comp=c('1'="Component 1", '2'="Component 2", '3'='Component 3')))+ ggtitle('                       sPLS, correlated data across time') + xlab('Number of days')+ scale_y_continuous(limits = c(-2, 2)) +ylab('Scaled value'))
+
+```
+
+```{r}
+summary.X1= spls.result(data = scale(X[["Protein"]]), block = 'X', pls3)
+summary.X2 = spls.result(data = scale(X[["Cyto"]]), block = 'Y', pls3)
+
+melt.data = melt(t(cbind(scale(protein_processed[, names(summary.X1$var.selected)]), scale(cyto_processed[, names(summary.X2$var.selected)]))))
+#melt.data = melt(t(cbind((X1[, names(summary.X1$var.selected)]), (X2[, names(summary.X2$var.selected)]))))
+melt.data$comp= as.factor(rep(c(summary.X1$var.selected, summary.X2$var.selected), 4))  # filling up the melted values by repeating comp and sign
+melt.data$sign= as.factor(rep(c(summary.X1$var.sign, summary.X2$var.sign), 4))
+melt.data$data = rep(c(rep('Protein', length(summary.X1$var.selected)), rep('Cyto', length(summary.X2$var.selected))), 4)
+melt.data$Y = substr(melt.data$Var2,9,9)
+
+
+# test <- melt.data %>%
+#   group_by(Var1,comp,sign,Y) %>%
+#   summarise(avg = mean(value))
+
+
+color=c("tomato","slateblue")
+names(color)=c("Protein","RNA")
+
+#png("spls_bioreactor.png", width = 3000, height = 1800, res = 400,pointsize=12)
+
+print(ggplot(melt.data, aes(x=Y, y=value, group = interaction(Var1,data), color = data)) +scale_color_manual(values=color)+ geom_line(lwd=0.2) +   facet_grid(sign~comp, labeller=labeller(sign = c(pos="Positive",neg="Negative"), comp=c('1'="Component 1", '2'="Component 2", '3'='Component 3')))+ ggtitle('                       sPLS, correlated data across time') + xlab('Number of days')+ scale_y_continuous(limits = c(-2, 2)) +ylab('Scaled value'))
+
+```
+
+```{r}
+plotLong((pls1),time = )
+```
+
+```{r}
+# Créer les quatre graphiques (un pour chaque combinaison de comp et sign)
+plots <- list()
+for (comp_value in unique(test$comp)) {
+  for (sign_value in unique(test$sign)) {
+    subset_data <- subset(test, comp == comp_value & sign == sign_value)
+    
+    # Créer un graphique pour chaque combinaison de comp et sign
+    p <- ggplot(subset_data, aes(x = Y, y = avg, color = factor(Y))) +
+      geom_line() +
+      labs(title = paste("comp =", comp_value, ", sign =", sign_value),
+           x = "Var1", y = "avg", color = "Y") +
+      theme_minimal()
+    
+    # Ajouter le graphique à la liste des graphiques
+    plots[[paste("comp", comp_value, "_sign", sign_value)]] <- p
+  }
+}
+
+# Afficher les graphiques
+plots
+
+# Créer le graphique
+p <- ggplot(test, aes(x = factor(Y), y = avg, color = factor(Y))) +
+  geom_line() +
+  labs(x = "Var1", y = "avg", color = "Y") +
+  facet_grid(comp ~ sign, scales = "free_y") +
+  theme_minimal()
+
+# Afficher le graphique
+print(p)
+
+```
+
+```{r}
+melt.data %>%
+  group_by(chr) %>%
+  summarise(avg = mean(x))
+```
+
+```{r}
+# Define factors for colours matching plotIndiv above
+cleaned_names <- unique(gsub("_\\d+$", "", rownames(scale_protein)))
+
+time.liver <- factor(scale_protein$Y)
+
+dose.liver <- factor(cleaned_names)
+
+col.liver <- color.mixo(time.liver)
+pch.liver <- as.numeric(dose.liver)
+
+
+plotIndiv(pls1,
+          group = time.liver,
+          pch = pch.liver,
+          legend = TRUE, legend.title = 'Stage of pregnancy',
+          legend.title.pch = 'Individuals',
+          title = "(a) Protein vs RNA",
+          ylim = c(-20, 25),
+          xlim = c(-5, 5))
+
+plotIndiv(pls2,
+          group = time.liver,
+          pch = pch.liver,
+          legend = TRUE, legend.title = 'Stage of pregnancy',
+          legend.title.pch = 'Individuals',
+          title = "(b) RNA vs Cyto")
+
+plotIndiv(pls3,
+          group = time.liver,
+          pch = pch.liver,
+          legend = TRUE, legend.title = 'Stage of pregnancy',
+          legend.title.pch = 'Individuals',
+          title = "(c) Protein vs Cyto")
+
+```
+
+## Plot Protein RNA
+```{r}
+
+cleaned_names <- unique(gsub("_\\d+$", "", rownames(scale_protein)))
+
+time.liver <- factor(scale_protein$Y)
+
+dose.liver <- factor(cleaned_names)
+
+col.liver <- color.mixo(time.liver)
+pch.liver <- as.numeric(dose.liver)
+
+
+plot(pls1$variates$X, pls1$variates$Y,
+     xlab = 'X component', ylab = 'y component / scaled y',
+     col = col.liver,pch = pch.liver, title = "(a) Protein vs RNA")
+legend('topleft', col = color.mixo(1:4), legend = levels(time.liver),
+       lty = 1, title = 'Time')
+legend('bottomright', legend = levels(dose.liver), pch = 1:4,
+       title = 'Femme')
+```
+## Plot RNA vs Cyto
+```{r}
+plot(pls2$variates$X, pls2$variates$Y,
+     xlab = 'X component', ylab = 'y component / scaled y',
+     col = col.liver,pch = pch.liver)
+legend('topleft', col = color.mixo(1:4), legend = levels(time.liver),
+       lty = 1, title = 'Time')
+legend('bottomright', legend = levels(dose.liver), pch = 1:4,
+       title = 'Femme')
+```
+## Plot Protein vs Cyto
+
+```{r}
+plot(pls3$variates$X, pls3$variates$Y,
+     xlab = 'X component', ylab = 'y component / scaled y',
+     col = col.liver,pch = pch.liver)
+legend('topleft', col = color.mixo(1:4), legend = levels(time.liver),
+       lty = 1, title = 'Time')
+legend('bottomright', legend = levels(dose.liver), pch = 1:4,
+       title = 'Femme')
+
+cor(pls3$variates$X, pls3$variates$Y)
+```
+
+# sPLS model and performance
+
+## Plot Protein RNA
+```{r}
+plotArrow(pls1, ind.names = FALSE, 
+          group = col.liver,
+          col.per.group = col.liver,
+          col = color.mixo(1:4),
+          legend = levels(time.liver),
+          legend.title = 'Stage pregnancy')
+```
+
+## Plot RNA vs Cyto
+
+```{r}
+plotArrow(pls2, ind.names = FALSE, 
+          group = col.liver,
+          col.per.group = col.liver,
+          col = color.mixo(1:4),
+          legend = levels(time.liver),
+          legend.title = 'Stage pregnancy')
+```
+## Plot Protein vs Cyto
+
+```{r}
+plotArrow(pls3, ind.names = FALSE, 
+          group = col.liver,
+          col.per.group = col.liver,
+          col = color.mixo(1:4),
+          legend = levels(time.liver),
+          legend.title = 'Stage pregnancy')
+```
+
+```{r}
+X11()  # To open a new window if the graphic is too large
+cim(pls1, comp = 1:2,
+    # To save the plot, uncomment:
+    save = 'pdf', name.save = 'cim_protein_RNA'
+    )
+```
+
+## RNA vs Cyto
+```{r}
+X11()  # To open a new window if the graphic is too large
+cim(pls2, comp = 1:2,
+    # To save the plot, uncomment:
+    save = 'pdf', name.save = 'cim_RNA_cyto'
+    )
+```
+## Protein vs cyto
+```{r}
+X11()  # To open a new window if the graphic is too large
+cim(pls3, comp = 1:2,
+    # To save the plot, uncomment:
+    save = 'pdf', name.save = 'cim_protein_cyto'
+    )
+```
+## Graphique a barre Protein vs RNA
+```{r}
+plotLoadings(pls1, comp = 1)
+```
+## Graphique a barre Cyto vs RNA
+```{r}
+plotLoadings(pls2, comp = 1)
+```
+## Graphique a barre Protein vs RNA
+```{r}
+plotLoadings(pls3, comp = 1)
+```
+
+# Corrélation
+
+```{r}
+cor(pls1$variates$X, pls1$variates$Y)
+```
+```{r}
+cor(pls2$variates$X, pls2$variates$Y)
+```
+
+```{r}
+cor(pls3$variates$X, pls3$variates$Y)
+```
+
+# block sPLS
+```{r}
+
+# for square matrix filled with 0.5s
+design = matrix(0.5, ncol = length(X), nrow = length(X), 
+                dimnames = list(names(X), names(X)))
+diag(design) = 0
+
+choice.ncomp <- 3 
+choice.keepX <- list(Protein = rep(50, 3), # 50 features per each component 
+                     RNA = rep(50, 3), 
+                     Cyto = rep(50, 3))
+
+# generate final model using "tuned" parameters
+final.mbspls.model = block.splsda(X = X, Y = scale_protein$Y,  
+                                ncomp = choice.ncomp, 
+                                keepX = choice.keepX,
+                                design = design, max.iter = 100)
+```
+
+
+# Diablo
+
+### Garde 1985 gènes les plus variants 
+
+```{r}
+num_genes_to_keep_diablo <- 100
+selected_genes_diablo <- sorted_genes[1:num_genes_to_keep_diablo]
+
+rna_processed_diablo <- rna[, selected_genes_diablo]
+
+num_prot_to_keep_diablo <- 100
+selected_prot_diablo <- sorted_proteins[1:num_prot_to_keep_diablo]
+
+protein_processed_diablo <- protein[, selected_prot_diablo]
+
+cyto_processed_diablo <- cyto_processed
+
+X <- list(Protein = protein_processed_diablo, RNA = rna_processed_diablo,
+          Cyto = cyto_processed_diablo)
+```
+
+
+```{r}
+Y <- scale_cyto$Y
+```
+
+```{r}
+design <- matrix(0.5, ncol = length(X), nrow = length(X), 
+                dimnames = list(names(X), names(X)))
+diag(design) <- 0
+design
+```
+
+## plot
+
+```{r}
+# chunk takes about 2 min to run
+set.seed(123) # for reproducibility
+
+diablo.tcga <- block.plsda(X, Y, ncomp = 2, design = design)
+perf.diablo.tcga = perf(diablo.tcga, validation = 'Mfold', folds = 10, nrepeat = 10)
+plot(perf.diablo.tcga)
+ncomp <- perf.diablo.tcga$choice.ncomp$WeightedVote["Overall.BER", "centroids.dist"]
+
+
+test.keepX <- list(Protein = seq(1, 100,10 ),
+                   RNA =  seq(1, 100, 10),
+                   Cyto = seq(5, 20, 5))
+
+tune.diablo.tcga <- tune.block.splsda(X, Y, ncomp = 2, 
+                              test.keepX = test.keepX, design = design,
+                              validation = 'Mfold', folds = 10, nrepeat = 20, 
+                              BPPARAM = BiocParallel::SnowParam(workers = 6),
+                              dist = "centroids.dist",
+                              max.iter = 200)
+
+list.keepX <- tune.diablo.tcga$choice.keepX
+
+#list.keepX <- list(Protein = c(3,5), RNA = c(1,20), Cyto = c(1,10))
+
+diablo.tcga <- block.splsda(X, Y, ncomp = ncomp, 
+                            keepX = list.keepX, design = design)
+
+plotDiablo(diablo.tcga, ncomp = 1)
+# mRNA variables selected on component 1
+#selectVar(diablo.tcga, block = 'RNA', comp = 1)
+#selectVar(diablo.tcga, block = 'Protein', comp = 1)
+#selectVar(diablo.tcga, block = 'Cyto', comp = 1)
+```
+
+
+```{r}
+library(mixOmics)
+
+# Fonction pour effectuer une PLS-DA sur trois blocs avec différentes valeurs de keepX
+perform_splsda <- function(X, Y, keepX_values) {
+  best_correlation <- -Inf
+  best_splsda <- NULL
+  
+  for (keepX in keepX_values) {
+    print(keepX)
+    # Effectuer la PLS-DA avec keepX spécifié
+    splsda <- block.splsda(X, Y, ncomp = 2, keepX = keepX)
+    
+    # Calculer les corrélations entre les composants des blocs
+        print(splsda$X1)
+
+    correlation_X1_X2 <- cor(splsda$variates$X1, splsda$variates$X2)
+    correlation_X2_X3 <- cor(splsda$variates$X2, splsda$variates$X3)
+    correlation_X1_X3 <- cor(splsda$variates$X1, splsda$variates$X3)
+    
+    # Calculer la corrélation moyenne
+    avg_correlation <- mean(c(correlation_X1_X2, correlation_X2_X3, correlation_X1_X3))
+    
+    # Mettre à jour la meilleure PLS-DA si la corrélation est meilleure
+    if (avg_correlation > best_correlation) {
+      best_correlation <- avg_correlation
+      best_splsda <- splsda
+    }
+  }
+  
+  return(best_splsda)
+}
+
+# Générer les combinaisons de keepX pour Protein, RNA et Cyto
+keepX_values <- list()
+for (protein in seq(1, 40, 5)) {
+  for (rna in seq(5, 50, 5)) {
+    for (cyto in seq(1, 20, 2)) {
+      keepX_values <- c(keepX_values, list(list(Protein = c(1, protein), RNA = c(1, rna), Cyto = c(1, cyto))))
+    }
+  }
+}
+
+Y <- sample_info$Y
+# Appel de la fonction
+best_diablo <- perform_splsda(X, Y, keepX_values)
+
+
+# Exemple d'utilisation de la fonction
+# Supposons que X1, X2, et X3 sont vos données pour les trois blocs
+# Supposons également que Y est votre variable de réponse
+# Supposons que keepX_values soit un vecteur contenant les valeurs de keepX à tester
+# best_splsda <- perform_splsda(X1, X2, X3, Y, keepX_values)
+
+```
+
+
+## Plot
+```{r}
+plotDiablo(diablo.tcga, ncomp = 1)
+```
+
+```{r}
+plotIndiv(diablo.tcga, ind.names = FALSE, legend = TRUE, 
+          title = 'TCGA, DIABLO comp 1 - 2')
+```
+
+
+```{r}
+plotArrow(diablo.tcga, ind.names = FALSE, legend = TRUE, 
+          title = 'TCGA, DIABLO comp 1 - 2')
+```
+
+```{r}
+plotVar(diablo.tcga, var.names = FALSE, style = 'graphics', legend = TRUE, 
+        pch = c(16, 17, 15), cex = c(2,2,2), 
+        col = c('darkorchid', 'brown1', 'lightgreen'),
+        title = 'TCGA, DIABLO comp 1 - 2')
+```
+
+## Circos plot 
+
+```{r}
+png("circos_plot_final.png", width = 1200, height = 1200)
+circosPlot(diablo.tcga, cutoff = 0.7, line = TRUE, 
+           color.blocks = c('darkorchid', 'brown1', 'lightgreen'),
+           color.cor = c("chocolate3","grey20"), size.labels = 2, 
+           size.legend = 2)
+dev.off()
+```
+
+## Network plot
+```{r}
+png("network_plot_final.png")
+network(diablo.tcga, blocks = c(1,2,3), 
+        cutoff = 0.79,
+        color.node = c('darkorchid', 'brown1', 'lightgreen'),
+        layout.fun = layout.circle,
+        # To save the plot, uncomment below line
+        #save = 'png', name.save = 'diablo-network'
+        )
+dev.off()
+
+```
+
+## Heatmap
+
+```{r}
+pdf("plot_heatmap_diablo.pdf")
+cimDiablo(diablo.tcga, color.blocks = c('darkorchid', 'brown1', 'lightgreen'),
+          comp = 1, margin=c(8,20), legend.position = "right")
+dev.off()
+```
+
+## Performance
+```{r}
+perf.diablo.tcga <- perf(diablo.tcga,  validation = 'Mfold', folds = 10, 
+                         nrepeat = 10, dist = 'centroids.dist')
+
+# Performance with Majority vote
+perf.diablo.tcga$MajorityVote.error.rate
+```
+
+```{r}
+# Performance with Weighted vote
+perf.diablo.tcga$WeightedVote.error.rate
+```
+
+
+```{r}
+auc.diablo.tcga <- auroc(diablo.tcga, roc.block = "RNA", roc.comp = 2,
+                   print = FALSE)
+```
+
+```{r}
+auc.diablo.tcga_protein <- auroc(diablo.tcga, roc.block = "Protein", roc.comp = 2,
+                   print = FALSE)
+```
+
+```{r}
+auc.diablo.tcga <- auroc(diablo.tcga, roc.block = "Cyto", roc.comp = 2,
+                   print = FALSE)
+```
+
+```{r}
+load("data_meryam.RData")
+```
+
+```{r}
+subgraph_prot <- induced_subgraph(full.graph, which(degrees_full > 50))
+clp <- cluster_optimal(subgraph_prot)
+plot(clp,subgraph_prot)
+```
